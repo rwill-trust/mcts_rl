@@ -333,12 +333,11 @@ def play_one_game(
                     for la_int in legal_actions: policy_target_vector[la_int] = uniform_prob
         if debug_mode: print(f"[play_one_game C4] Policy target vector (sum={policy_target_vector.sum()}): {policy_target_vector}")
 
+        # Record this move for both players (self-play uses both perspectives)
         current_state_copy = game_adapter.copyState(st)
-        if is_learning_agent_turn:
-            hist.append((current_state_copy, policy_target_vector, 0))
-            if debug_mode: print(f"[play_one_game C4] LEARNING AGENT ({current_player_char}) played. Stored policy target.")
-        elif debug_mode:
-             print(f"[play_one_game C4] OPPONENT ({current_player_char}) played. Policy target not stored for this turn.")
+        hist.append((current_state_copy, policy_target_vector, 0))
+        if debug_mode:
+            print(f"[play_one_game C4] PLAYER ({current_player_char}) played. Stored policy target.")
         
         st = game_adapter.applyAction(st, chosen_action_int)
         move_no += 1
@@ -368,12 +367,15 @@ def play_one_game(
         board_str_final = "\n".join([str(row) for row in st["board"]])
         print(f"[play_one_game C4] Final board state (player {st['current_player']}):\n{board_str_final}")
 
+    # Convert accumulated history to final training targets for all players
     final_history = []
     for idx, (recorded_state, policy, _) in enumerate(hist):
         player_at_state = game_adapter.getCurrentPlayer(recorded_state)
+        # Assign value from perspective of the acting player: X sees +z, O sees -z
         value_for_state_player = z_for_learning_agent if player_at_state == "X" else -z_for_learning_agent
         final_history.append((recorded_state, policy, value_for_state_player))
-        if debug_mode: print(f"[play_one_game C4] final_hist item {idx}: Player: {player_at_state}, Val: {value_for_state_player}, Policy sum: {np.sum(policy) if policy is not None else 'N/A'}")
+        if debug_mode:
+            print(f"[play_one_game C4] final_hist item {idx}: Player: {player_at_state}, Val: {value_for_state_player}, Policy sum: {np.sum(policy) if policy is not None else 'N/A'}")
     
     if screen: # If screen was initialized and not closed by user event
         if debug_mode: print("Visualized game ended. Displaying final board.")
