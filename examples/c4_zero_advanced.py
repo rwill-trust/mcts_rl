@@ -16,6 +16,7 @@ Four environment. Key features include:
 from __future__ import annotations
 import os # Ensure os is imported early
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1' # Suppress pygame community message globally for this script and its children
+import pygame # Added for visualization
 
 import argparse
 import random
@@ -193,7 +194,10 @@ def play_one_game(
     mcts_simulations_learning: int, # Sims for the learning agent
     mcts_simulations_opponent: int, # Sims for the opponent agent (can be different)
     max_moves: int = BOARD_H * BOARD_W, 
-    debug_mode: bool = True
+    debug_mode: bool = True,
+    visualize: bool = False, # New argument for visualization
+    visualization_delay_ms: int = 500, # New argument
+    visualization_end_delay_ms: int = 2000 # New argument
 ) -> List[Tuple[dict, np.ndarray, int]]:
     if torch is None or np is None: raise RuntimeError("PyTorch and NumPy are required")
     
@@ -202,8 +206,29 @@ def play_one_game(
     move_no = 0
     current_temp = 1.0
 
+    screen = None
+    # Constants for Pygame visualization (can be adjusted)
+    SQUARESIZE = 70 
+    
+    if visualize:
+        if not pygame.get_init():
+            pygame.init()
+        
+        width = BOARD_W * SQUARESIZE
+        height = (BOARD_H + 1) * SQUARESIZE # +1 row for dropping pieces
+        size = (width, height)
+        screen = pygame.display.set_mode(size)
+        pygame.display.set_caption("Connect Four - Self-Play Visualization")
+        
+        if hasattr(game_adapter.c4_game, 'draw_board') and callable(getattr(game_adapter.c4_game, 'draw_board')):
+            game_adapter.c4_game.draw_board(screen)
+        else:
+            if debug_mode: print("Warning: game_adapter.c4_game.draw_board method not found. Visualization will be impaired.")
+        pygame.display.update()
+        pygame.time.wait(500) # Initial pause
+
     if debug_mode: print(f"\n--- play_one_game START (Connect Four) ---")
-    if debug_mode: print(f"[play_one_game C4] Opponent type: {opponent_type}")
+    if debug_mode: print(f"[play_one_game C4] Opponent type: {opponent_type}, Visualize: {visualize}")
 
     # Determine which player is the learning agent (always perspective 'X' for data collection)
     learning_agent_player_char = "X"
@@ -270,6 +295,21 @@ def play_one_game(
         st = game_adapter.applyAction(st, chosen_action_int)
         move_no += 1
 
+        if visualize and screen:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    if debug_mode: print("Pygame window closed by user during game.")
+                    pygame.quit()
+                    screen = None # Mark screen as closed
+                    visualize = False # Stop further visualization attempts for this game
+                    break
+            
+            if screen: # If not closed by QUIT event
+                if hasattr(game_adapter.c4_game, 'draw_board') and callable(getattr(game_adapter.c4_game, 'draw_board')):
+                    game_adapter.c4_game.draw_board(screen)
+                pygame.display.update()
+                pygame.time.wait(visualization_delay_ms)
+
     winner = game_adapter.getGameOutcome(st)
     z_for_learning_agent = 0
     if winner == learning_agent_player_char: z_for_learning_agent = 1
@@ -287,6 +327,15 @@ def play_one_game(
         final_history.append((recorded_state, policy, value_for_state_player))
         if debug_mode: print(f"[play_one_game C4] final_hist item {idx}: Player: {player_at_state}, Val: {value_for_state_player}, Policy sum: {np.sum(policy) if policy is not None else 'N/A'}")
     
+    if screen: # If screen was initialized and not closed by user event
+        if debug_mode: print("Visualized game ended. Displaying final board.")
+        if hasattr(game_adapter.c4_game, 'draw_board') and callable(getattr(game_adapter.c4_game, 'draw_board')):
+            game_adapter.c4_game.draw_board(screen) # Draw final state
+        pygame.display.update()
+        pygame.time.wait(visualization_end_delay_ms) # Wait to see final state
+        pygame.quit() # Quit pygame at the end of this specific game visualization
+        screen = None
+
     if debug_mode: print("--- play_one_game END (Connect Four) ---")
     return final_history
 
@@ -566,6 +615,7 @@ def run(parsed_cli_args=None) -> None:
     overall_training_steps = 0 # For W&B step logging
     games_collected_this_session = 0 # To track games generated in this run
     opponent_checkpoints_pool: deque[Path] = deque(maxlen=args_global.max_opponent_pool_size)
+    ep_first_visualized_game_msg_shown = -1 # Tracks if visualization note has been shown for the current epoch
 
     try:
         for ep in range(start_ep, args_global.epochs + 1):
@@ -639,13 +689,31 @@ def run(parsed_cli_args=None) -> None:
                 if args_global.num_parallel_selfplay <= 1:
                     for g in range(args_global.games_per_epoch):
                         learning_net.eval()
+
+                        visualize_this_specific_game = False
+                        if args_global.visualize_selfplay: # Master flag for visualization
+                            if args_global.games_per_epoch == 1:
+                                visualize_this_specific_game = True
+                            elif g == 0: # It's the first game of potentially multiple sequential games
+                                visualize_this_specific_game = True
+                                if ep_first_visualized_game_msg_shown != ep: # Print message only once per epoch
+                                    print(f"\n[Epoch {ep} Visualization Note] --visualize-selfplay is active.")
+                                    print(f"  Sequential mode with {args_global.games_per_epoch} games per epoch.")
+                                    print(f"  Only the FIRST game (game 0/{args_global.games_per_epoch-1}) of this epoch will be visualized.")
+                                    print(f"  To visualize every game, set --games-per-epoch 1 when using --visualize-selfplay.")
+                                    ep_first_visualized_game_msg_shown = ep
+                            # else: (g > 0 and games_per_epoch > 1) -> visualize_this_specific_game remains False
+                        
                         game_hist = play_one_game(
                             learning_net, game_adapter, learning_mcts_instance,
                             "self", None, None,
                             temp_schedule, args_global.mcts_simulations,
                             args_global.mcts_simulations_opponent,
                             max_moves=args_global.max_game_moves,
-                            debug_mode=args_global.debug_single_loop
+                            debug_mode=args_global.debug_single_loop,
+                            visualize=visualize_this_specific_game,
+                            visualization_delay_ms=args_global.visualization_delay_ms,
+                            visualization_end_delay_ms=args_global.visualization_end_delay_ms
                         )
                         if isinstance(buf, PrioritizedReplayBuffer):
                             for exp in game_hist:
@@ -854,6 +922,11 @@ def parser() -> argparse.ArgumentParser:
     g_wandb.add_argument("--wandb-project", type=str, default="c4_alphazero_advanced", help="W&B project name.")
     g_wandb.add_argument("--wandb-run-name", type=str, default=None, help="Custom W&B run name (defaults to W&B auto-generated name).")
     g_wandb.add_argument("--wandb-entity", type=str, default=None, help="W&B entity (username or team) if not using default.")
+
+    g_vis = p.add_argument_group("Visualization (Connect Four - Sequential Self-Play Only)")
+    g_vis.add_argument("--visualize-selfplay", action="store_true", help="Visualize self-play games if not in parallel mode (--num-parallel-selfplay <= 1). Only the first game per epoch will be shown if games-per-epoch > 1.")
+    g_vis.add_argument("--visualization-delay-ms", type=int, default=500, help="Delay in milliseconds between moves during visualization.")
+    g_vis.add_argument("--visualization-end-delay-ms", type=int, default=2000, help="Delay in milliseconds at the end of a visualized game.")
 
     return p
 
