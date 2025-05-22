@@ -54,6 +54,57 @@ BOARD_H = ConnectFour.ROWS
 BOARD_W = ConnectFour.COLS
 ACTION_SIZE = BOARD_W # In ConnectFour, action is the column index
 
+# --- Pygame Visualization Constants ---
+PYGAME_SQUARESIZE = 70
+PYGAME_RADIUS = int(PYGAME_SQUARESIZE / 2 - 5)
+PYGAME_COLOR_BLUE = (0, 0, 255)
+PYGAME_COLOR_BLACK = (0, 0, 0)
+PYGAME_COLOR_RED = (255, 0, 0)
+PYGAME_COLOR_YELLOW = (255, 255, 0)
+PYGAME_COLOR_WHITE = (255, 255, 255)
+PYGAME_COLOR_LIGHT_GREY = (200, 200, 200)
+
+def visualize_c4_board_from_state_dict(screen: pygame.Surface, board_array: List[List[str | None]], current_player_token: str, board_h: int, board_w: int, squaresize: int):
+    """Draws the Connect Four board on the given Pygame screen.
+    Row 0 in board_array is the bottom-most row.
+    The screen is assumed to have an extra row's height at the top for piece dropping animation (not implemented here).
+    """
+    screen_width = board_w * squaresize
+    screen_height_for_board = board_h * squaresize # Actual board drawing area height
+    top_offset = squaresize # Offset due to the extra row at the top for visualization
+
+    for c in range(board_w):
+        for r_logic in range(board_h): # r_logic is 0 for bottom row, board_h-1 for top row
+            # Pygame's y=0 is at the top.
+            # Visual row 0 (top) corresponds to logical row board_h-1.
+            # Visual row board_h-1 (bottom) corresponds to logical row 0.
+            r_visual_board_top_based = (board_h - 1 - r_logic) # 0 for top logical row, board_h-1 for bottom logical row
+            
+            rect_x = c * squaresize
+            rect_y = r_visual_board_top_based * squaresize + top_offset # Add offset for the top blank row
+
+            pygame.draw.rect(screen, PYGAME_COLOR_BLUE, (rect_x, rect_y, squaresize, squaresize))
+            
+            piece = board_array[r_logic][c]
+            piece_color = PYGAME_COLOR_BLACK # Default for empty slot background
+            if piece == 'X': # Assuming 'X' is a player, adapt if using different tokens
+                piece_color = PYGAME_COLOR_RED
+            elif piece == 'O': # Assuming 'O' is the other player
+                piece_color = PYGAME_COLOR_YELLOW
+            
+            circle_center_x = int(rect_x + squaresize / 2)
+            circle_center_y = int(rect_y + squaresize / 2)
+            pygame.draw.circle(screen, piece_color, (circle_center_x, circle_center_y), PYGAME_RADIUS)
+
+    # Indicate current player at the top (optional)
+    player_text = f"Player {current_player_token}'s Turn"
+    font = pygame.font.Font(None, 36) # Default Pygame font
+    text_surface = font.render(player_text, True, PYGAME_COLOR_BLACK)
+    text_rect = text_surface.get_rect(center=(screen_width / 2, top_offset / 2))
+    screen.blit(text_surface, text_rect)
+
+    pygame.display.update()
+
 # ---------------------------------------------------------------------------
 # State encoding (ConnectFour specific)
 # ---------------------------------------------------------------------------
@@ -207,23 +258,20 @@ def play_one_game(
     current_temp = 1.0
 
     screen = None
-    # Constants for Pygame visualization (can be adjusted)
-    SQUARESIZE = 70 
+    # Use constants defined globally for Pygame
     
     if visualize:
         if not pygame.get_init():
             pygame.init()
         
-        width = BOARD_W * SQUARESIZE
-        height = (BOARD_H + 1) * SQUARESIZE # +1 row for dropping pieces
+        width = BOARD_W * PYGAME_SQUARESIZE
+        height = (BOARD_H + 1) * PYGAME_SQUARESIZE # +1 row for dropping pieces
         size = (width, height)
         screen = pygame.display.set_mode(size)
         pygame.display.set_caption("Connect Four - Self-Play Visualization")
         
-        if hasattr(game_adapter.c4_game, 'draw_board') and callable(getattr(game_adapter.c4_game, 'draw_board')):
-            game_adapter.c4_game.draw_board(screen)
-        else:
-            if debug_mode: print("Warning: game_adapter.c4_game.draw_board method not found. Visualization will be impaired.")
+        screen.fill(PYGAME_COLOR_LIGHT_GREY) # Initial background fill
+        visualize_c4_board_from_state_dict(screen, st["board"], st["current_player"], BOARD_H, BOARD_W, PYGAME_SQUARESIZE)
         pygame.display.update()
         pygame.time.wait(500) # Initial pause
 
@@ -305,8 +353,8 @@ def play_one_game(
                     break
             
             if screen: # If not closed by QUIT event
-                if hasattr(game_adapter.c4_game, 'draw_board') and callable(getattr(game_adapter.c4_game, 'draw_board')):
-                    game_adapter.c4_game.draw_board(screen)
+                screen.fill(PYGAME_COLOR_LIGHT_GREY) # Fill background before drawing
+                visualize_c4_board_from_state_dict(screen, st["board"], st["current_player"], BOARD_H, BOARD_W, PYGAME_SQUARESIZE)
                 pygame.display.update()
                 pygame.time.wait(visualization_delay_ms)
 
@@ -329,8 +377,8 @@ def play_one_game(
     
     if screen: # If screen was initialized and not closed by user event
         if debug_mode: print("Visualized game ended. Displaying final board.")
-        if hasattr(game_adapter.c4_game, 'draw_board') and callable(getattr(game_adapter.c4_game, 'draw_board')):
-            game_adapter.c4_game.draw_board(screen) # Draw final state
+        screen.fill(PYGAME_COLOR_LIGHT_GREY) # Fill background
+        visualize_c4_board_from_state_dict(screen, st["board"], st["current_player"], BOARD_H, BOARD_W, PYGAME_SQUARESIZE) # Draw final state
         pygame.display.update()
         pygame.time.wait(visualization_end_delay_ms) # Wait to see final state
         pygame.quit() # Quit pygame at the end of this specific game visualization
