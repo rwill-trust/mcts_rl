@@ -673,6 +673,9 @@ def run(parsed_cli_args=None) -> None:
                 _debug_flag = True # Ensure block starts with an assignment
                 print(f"\n--- [DEBUG] Epoch {ep} START (Connect Four) ---")
             
+            # Initialize per-epoch metrics for game length and outcomes
+            epoch_game_lengths = []
+            epoch_game_outcomes = []
             # Training Phase: sample experiences and update network
             # Determine minimum buffer fill to start training
             current_min_train_fill = (args_global.min_buffer_fill_for_per_training
@@ -765,6 +768,13 @@ def run(parsed_cli_args=None) -> None:
                             visualization_delay_ms=args_global.visualization_delay_ms,
                             visualization_end_delay_ms=args_global.visualization_end_delay_ms
                         )
+                        # Record this game's length and outcome for logging
+                        game_len = len(game_hist)
+                        epoch_game_lengths.append(game_len)
+                        if game_len > 0:
+                            z0 = game_hist[0][2]
+                            epoch_game_outcomes.append(z0)
+                        # Add experiences to buffer
                         if isinstance(buf, PrioritizedReplayBuffer):
                             for exp in game_hist:
                                 buf.add(exp)
@@ -886,7 +896,23 @@ def run(parsed_cli_args=None) -> None:
                 }
                 if isinstance(buf, PrioritizedReplayBuffer):
                     log_data["per_beta"] = buf.beta
-                
+                # Log mean TD error if available
+                if 'td_errors' in locals() and len(td_errors) > 0:
+                    log_data["mean_td_error"] = float(np.mean(td_errors))
+                # Log game length statistics if self-play was run
+                if 'epoch_game_lengths' in locals() and epoch_game_lengths:
+                    log_data["avg_game_length"] = sum(epoch_game_lengths) / len(epoch_game_lengths)
+                    log_data["min_game_length"] = min(epoch_game_lengths)
+                    log_data["max_game_length"] = max(epoch_game_lengths)
+                # Log win/draw/loss rates from self-play
+                if 'epoch_game_outcomes' in locals() and epoch_game_outcomes:
+                    total_outcomes = len(epoch_game_outcomes)
+                    wins = sum(1 for z in epoch_game_outcomes if z == 1)
+                    draws = sum(1 for z in epoch_game_outcomes if z == 0)
+                    losses = sum(1 for z in epoch_game_outcomes if z == -1)
+                    log_data["win_rate"] = wins / total_outcomes
+                    log_data["draw_rate"] = draws / total_outcomes
+                    log_data["loss_rate"] = losses / total_outcomes
                 wandb.log(log_data, step=ep) # Use epoch as step
 
     except KeyboardInterrupt: print("\nTraining interrupted.")
