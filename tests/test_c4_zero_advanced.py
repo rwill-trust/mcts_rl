@@ -2,6 +2,11 @@ import os
 import tempfile
 import unittest
 
+try:
+    import pygame  # noqa: F401
+except Exception:  # pragma: no cover - skip if pygame missing
+    raise unittest.SkipTest("pygame not available")
+
 import examples.c4_zero_advanced as adv
 
 if adv.torch is None:  # pragma: no cover - skip if torch missing
